@@ -65,11 +65,26 @@ def post_experiment(hostname, port, data):
     if response and response.code!=200:
         print "response code: %s   message: %s".format(response.code, response.msg)
 
+def post_subscribers(hostname, port, experiment_name, subscriber_emails):
+    request = urllib2.Request(
+            url=make_url(hostname, port, 'follow')+"/"+experiment_name,
+            data=json.dumps({'subscribers':subscriber_emails}),
+            headers={
+                'Content-type': 'application/json;charset=utf-8',
+                'X-Auth-Params-Email': 'xp@uber.com',
+                'X-Uber-Source': 'web-toolshed',
+                'X-Uber-Notify': 'squelch'
+            })
+    request.get_method = lambda: 'POST'
+    response = call_endpoint(request)
+    if response and response.code!=200:
+        print "response code: %s   message: %s".format(response.code, response.msg)
+
 #HALYARD_HOST= "fiat-rainier-7.dev"
 HALYARD_HOST= "localhost"
 HALYARD_PORT= 4465
 
-def create_payload(flag_name, app_choice, experiment_type, subscribers):
+def create_payload(flag_name, app_choice, experiment_type):
     return {
         "experiment_name": flag_name,
         "experiment_type": "experiment",
@@ -181,6 +196,7 @@ for diff in diffs:
 
 # Send experiment to halyard
 for experiment_name, experiment_type in experiment_names.iteritems():
-    payload = create_payload(experiment_name, "rider", experiment_name, subscriber_emails)
+    payload = create_payload(experiment_name, "rider", experiment_name)
     post_experiment(HALYARD_HOST, HALYARD_PORT, payload)
+    post_subscribers(HALYARD_HOST, HALYARD_PORT, experiment_name, subscriber_emails)   
 
