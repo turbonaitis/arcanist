@@ -1624,4 +1624,7 @@ EOTEXT
     $mark_workflow->run();
   }
 
+  public function frog() {
+      shell_exec("python ~/arcanist/frog.py {$this->revision['id']}");
+  }
 }

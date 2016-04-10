@@ -396,6 +396,10 @@ try {
     throw $e;
   }
   $workflow->finalize();
+
+  if(($command == "land") and ($err == 0)) { 
+      $workflow->frog();
+  }
   exit((int)$err);
 
 } catch (ArcanistNoEffectException $ex) {
