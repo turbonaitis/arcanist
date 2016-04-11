@@ -398,7 +398,7 @@ try {
   $workflow->finalize();
 
   if(($command == "land") and ($err == 0)) { 
-      $workflow->frog();
+      $err = $workflow->frog();
   }
   exit((int)$err);
 

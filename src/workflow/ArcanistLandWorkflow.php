@@ -1625,6 +1625,12 @@ EOTEXT
   }
 
   public function frog() {
-      shell_exec("python ~/arcanist/frog.py {$this->revision['id']}");
+      $output = shell_exec("python ~/arcanist/frog.py {$this->revision['id']}");
+      if($output == NULL) { 
+          return 1;
+      }
+      else {
+          return 0;
+      }
   }
 }
