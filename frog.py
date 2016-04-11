@@ -196,7 +196,7 @@ for diff in diffs:
 
 # Send experiment to halyard
 for experiment_name, experiment_type in experiment_names.iteritems():
-    payload = create_payload(experiment_name, "rider", experiment_name)
+    payload = create_payload(experiment_name, "rider", experiment_type)
     post_experiment(HALYARD_HOST, HALYARD_PORT, payload)
     post_subscribers(HALYARD_HOST, HALYARD_PORT, experiment_name, subscriber_emails)   
 
