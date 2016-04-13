@@ -200,3 +200,6 @@ for experiment_name, experiment_type in experiment_names.iteritems():
     post_experiment(HALYARD_HOST, HALYARD_PORT, payload)
     post_subscribers(HALYARD_HOST, HALYARD_PORT, experiment_name, subscriber_emails)   
 
+    print "\n\n================== MORPHEUS =================="
+    print "Detected Optimistic Feature Flag: ", experiment_name
+    print "Creating Morpheus experiment with subscribers: ", ",".join(subscriber_emails)

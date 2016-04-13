@@ -1630,6 +1630,7 @@ EOTEXT
           return 1;
       }
       else {
+          echo $output;
           return 0;
       }
   }
