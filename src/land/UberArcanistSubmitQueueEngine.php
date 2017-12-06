@@ -3,9 +3,9 @@
 final class UberArcanistSubmitQueueEngine
     extends ArcanistGitLandEngine
 {
-  private $revision;
-  private $shouldShadow;
-  private $skipUpdateWorkingCopy;
+  protected $revision;
+  protected $shouldShadow;
+  protected $skipUpdateWorkingCopy;
   private $submitQueueRegex;
   private $tbr;
   private $submitQueueTags;
@@ -291,6 +291,6 @@ final class UberArcanistSubmitQueueEngine
     }
   }
 
-  private $submitQueueClient;
-  private $conduit;
+  protected $submitQueueClient;
+  protected $conduit;
 }
