@@ -9,14 +9,27 @@
 final class UberArcanistStackSubmitQueueEngine
   extends UberArcanistSubmitQueueEngine
 {
-
   private $revisionIdsInStackOrder;
   private $revisionIdToDiffIds;
-  private $directPatchApplyBranches;
+  private $temporaryBranches;
   private $traceModeEnabled;
-  private $stdin;
-  private $stdout;
-  private $stderr;
+
+  /**
+   * @return mixed
+   */
+  public function getTraceModeEnabled()
+  {
+    return $this->traceModeEnabled;
+  }
+
+  /**
+   * @param mixed $traceModeEnabled
+   */
+  public function setTraceModeEnabled($traceModeEnabled)
+  {
+    $this->traceModeEnabled = $traceModeEnabled;
+    return $this;
+  }
 
   /**
    * @return mixed
@@ -36,104 +49,23 @@ final class UberArcanistStackSubmitQueueEngine
   }
 
   /**
-   * @return mixed
+   * Ensures latest diff of each revision in the stack patches well against latest diff of its parent.
    */
-  public function getTraceModeEnabled()
-  {
-    return $this->traceModeEnabled;
-  }
-
-  /**
-   * @param mixed $traceModeEnabled
-   */
-  public function setTraceModeEnabled($traceModeEnabled)
-  {
-    $this->traceModeEnabled = $traceModeEnabled;
-    return $this;
-  }
-
-  private function gatherStreamHandles() {
-    if( ($stdin = fopen( 'php://stdin', 'r' )) === false )
-    {
-      echo 'Failed to open STDIN'."\n";
-      exit();
-    }
-    if( ($stdout = fopen( 'php://stdout', 'w' )) === false )
-    {
-      echo 'Failed to open STDOUT'."\n";
-      exit();
-    }
-    if( ($stderr = fopen( 'php://stderr', 'w' )) === false )
-    {
-      echo 'Failed to open STDERR'."\n";
-      exit();
-    }
-    $this->stdin = $stdin;
-    $this->stdout = $stdout;
-    $this->stderr = $stderr;
-  }
-  public function execute()
-  {
-    $this->gatherStreamHandles();
-    $this->verifySourceAndTargetExist();
-    $this->fetchTarget();
-
-    $this->printLandingCommits();
-
-    if ($this->getShouldPreview()) {
-      $this->writeInfo(
-        pht('PREVIEW'),
-        pht('Completed preview of operation.'));
-      return;
-    }
-
-    $this->saveLocalState();
+  protected function validate() {
     try {
-      if (!$this->getSkipUpdateWorkingCopy()) {
-        $this->updateWorkingCopy();
-      }
-
-      // At this step source commit point is set
-      $this->validate();
-
-      $workflow = $this->getWorkflow();
-      if ($workflow->getConfigFromAnySource("uber.land.submitqueue.events.prepush")) {
-        // fn dispatches ArcanistEventType::TYPE_LAND_WILLPUSHREVISION for
-        // arc-pre-push hooks;  see UberArcPrePushEventListener
-        $workflow->didCommitMerge();
-      }
-
-      $this->pushChange();
-      if (! $this->shouldShadow) {
-        // cleanup the local state
-        $this->reconcileLocalState();
-        $topDiffs = $this->revisionIdToDiffIds[end($this->revisionIdsInStackOrder)];
-        $topDiff = $topDiffs[0];
-        echo pht("You can also use the below arc command to pull the change you submitted \n".
-          "arc patch --diff %s --nobranch\n", $topDiff);
-        if ($this->getShouldKeep()) {
-          echo tsprintf("%s\n", pht('Keeping local branch.'));
-        } else {
-          $this->checkoutTarget();
-          $this->destroyLocalBranch();
-        }
-      }
-      $this->restoreWhenDestroyed = false;
-    }  catch (Exception $ex) {
-      $this->restoreLocalState();
-      throw $ex;
+      $console = PhutilConsole::getConsole();
+      $this->buildRevisionIdToDiffIds();
+      $console->writeOut("**<bg:blue> %s </bg>** %s\n", "VERIFY", "Starting validations !!");
+      $this->applyPatches();
+      $console->writeOut("**<bg:green> %s </bg>** %s\n", 'Verification Passed', pht("Ready to land"));
     } finally {
       $this->cleanup();
     }
   }
 
   private function cleanup() {
-    $this->cleanupTemporaryBranches($this->directPatchApplyBranches);
-  }
-
-  private function cleanupTemporaryBranches(&$localBranches) {
     $api = $this->getRepositoryAPI();
-    foreach ($localBranches as $revision => $branch) {
+    foreach ($this->temporaryBranches as $revision => $branch) {
       $this->debugLog("Deleting temporary branch %s\n", $branch);
       try {
         $api->execxLocal('branch -D -- %s', $branch);
@@ -144,12 +76,7 @@ final class UberArcanistStackSubmitQueueEngine
     }
   }
 
-  private function checkoutTarget() {
-    $api = $this->getRepositoryAPI();
-    $api->execxLocal("checkout %s --", $this->getTargetOnto());
-  }
-
-  private function pushChange() {
+  protected function pushChangeToSubmitQueue() {
     $this->writeInfo(
       pht('PUSHING'),
       pht('Pushing changes to Submit Queue.'));
@@ -159,11 +86,7 @@ final class UberArcanistStackSubmitQueueEngine
       $this->getTargetRemote());
 
     $remoteUrl = trim($out);
-    // Get the latest revision as we could have updated the diff
-    // as a result of arc diff
-    $revision = $this->getRevision();
     $stack = $this->generateRevisionDiffMappingForLanding();
-    $this->debugLog("Stack:");
     print_r($this->revisionIdsInStackOrder);
     $statusUrl = $this->submitQueueClient->submitMergeStackRequest(
       $remoteUrl,
@@ -174,39 +97,6 @@ final class UberArcanistStackSubmitQueueEngine
       pht('Successfully submitted the request to the Submit Queue.'),
       pht('Please use "%s" to track your changes', $statusUrl));
   }
-
-  private function generateRevisionDiffMappingForLanding() {
-    $revisonDiffStack = array();
-    foreach ($this->revisionIdsInStackOrder as $revisionId) {
-      array_push($revisonDiffStack, array(
-        "revisionId" => $revisionId,
-        "diffId" => head($this->revisionIdToDiffIds[$revisionId])
-      ));
-    }
-    return $revisonDiffStack;
-  }
-
-  private function updateWorkingCopy() {
-    $api = $this->getRepositoryAPI();
-
-    $api->execxLocal('checkout %s --', $this->getSourceRef());
-
-    try {
-      // merge target against source to generate the latest patch
-      $api->execxLocal('merge --no-stat %s --', $this->getTargetFullRef());
-    } catch (Exception $ex) {
-      $api->execManualLocal('merge --abort');
-      $api->execManualLocal('reset --hard HEAD --');
-
-      throw new Exception(
-        pht(
-          '"%s" does not merge cleanly into Local "%s". Merge or rebase '.
-          'local changes so they can merge cleanly.',
-          $this->getTargetFullRef(),
-          $this->getSourceRef()));
-    }
-  }
-
   /**
    * Create one branch per revision in the stack and apply latest diff of each revision on top
    * of its parent. Ensure no merge conflicts.
@@ -216,12 +106,12 @@ final class UberArcanistStackSubmitQueueEngine
     $base_ref =  $repository_api->getBaseCommit();
     $base_revision = $base_ref;
     // Create temp branches one per diff in stack. We use this branch to do "arc patch <diff_id>" directly
-    $this->directPatchApplyBranches = array();
+    $this->temporaryBranches = array();
     foreach($this->revisionIdsInStackOrder as $revision_id) {
-      $this->directPatchApplyBranches[$revision_id] = $this->createBranch($base_revision);
+      $this->temporaryBranches[$revision_id] = $this->createBranch($base_revision);
       $this->debugLog("Created temporary branch %s for revision %s for direct arc patch".
-        " Base Commit : %s\n", $this->directPatchApplyBranches[$revision_id], $revision_id, $base_revision);
-      $local_branch = $this->directPatchApplyBranches[$revision_id];
+        " Base Commit : %s\n", $this->temporaryBranches[$revision_id], $revision_id, $base_revision);
+      $local_branch = $this->temporaryBranches[$revision_id];
       $diffIds = $this->revisionIdToDiffIds[$revision_id];
       $latestDiffId = head($diffIds);
       $this->debugLog("Applying diff patch %s to branch %s (revision %s)\n", $latestDiffId, $local_branch, $revision_id);
@@ -258,12 +148,6 @@ final class UberArcanistStackSubmitQueueEngine
     }
   }
 
-  private function normalizeDiff($text) {
-    $changes = id(new ArcanistDiffParser())->parseDiff($text);
-    ksort($changes);
-    return ArcanistBundle::newFromChanges($changes)->toGitPatch();
-  }
-
   private function runCommandSilently($cmdArr) {
     $stdoutFile = tempnam("/tmp", "arc_stack_out_");
     $stderrFile = tempnam("/tmp", "arc_stack_err_");
@@ -283,6 +167,7 @@ final class UberArcanistStackSubmitQueueEngine
       unlink($stdoutFile);
     }
   }
+
   private function runChildWorkflow($workflow, $paramArray, $passThru, $errTitle, $errMessage) {
     if (!$passThru) {
       $this->runCommandSilently(array_merge(
@@ -303,17 +188,6 @@ final class UberArcanistStackSubmitQueueEngine
     }
   }
 
-  /**
-   * Ensures latest diff of each revision in the stack patches well against latest diff of its parent.
-   */
-  public function validate() {
-    $console = PhutilConsole::getConsole();
-    $this->buildRevisionIdToDiffIds();
-    $console->writeOut("**<bg:blue> %s </bg>** %s\n", "VERIFY", "Starting validations !!");
-    $this->applyPatches();
-    $console->writeOut("**<bg:green> %s </bg>** %s\n", 'Verification Passed', pht("Ready to land"));
-  }
-
   private function createBranch($base_revision) {
     $repository_api = $this->getRepositoryAPI();
     $repository_api->reloadWorkingCopy();
@@ -327,35 +201,6 @@ final class UberArcanistStackSubmitQueueEngine
     $this->debugLog("%s\n", pht('Created and checked out branch %s.\n', $branch_name));
     $repository_api->reloadWorkingCopy();
     return $branch_name;
-  }
-
-  protected function verifySourceAndTargetExist() {
-    $api = $this->getRepositoryAPI();
-
-    list($err) = $api->execManualLocal(
-      'rev-parse --verify %s',
-      $this->getTargetFullRef());
-
-    if ($err) {
-      throw new Exception(
-        pht(
-          'Branch "%s" does not exist in remote "%s".',
-          $this->getTargetOnto(),
-          $this->getTargetRemote()));
-    }
-
-    list($err, $stdout) = $api->execManualLocal(
-      'rev-parse --verify %s',
-      $this->getSourceRef());
-
-    if ($err) {
-      throw new Exception(
-        pht(
-          'Branch "%s" does not exist in the local working copy.',
-          $this->getSourceRef()));
-    }
-
-    $this->sourceCommit = trim($stdout);
   }
 
   private function getBranchName() {
@@ -399,16 +244,16 @@ final class UberArcanistStackSubmitQueueEngine
     return $branch_name;
   }
 
-  private function debugLog(...$message) {
-    if ( $this->traceModeEnabled) {
-      echo phutil_console_format(call_user_func_array('pht', $message));
-    }
-  }
-
   private function execxLocal($pattern /* , ... */) {
     $args = func_get_args();
     $future = newv('ExecFuture', $args);
     $future->setCWD($this->getRepositoryAPI()->getPath());
     return $future->resolvex();
+  }
+
+  private function debugLog(...$message) {
+    if ( $this->traceModeEnabled) {
+      echo phutil_console_format(call_user_func_array('pht', $message));
+    }
   }
 }

@@ -1,6 +1,6 @@
 <?php
 
-final class UberArcanistSubmitQueueEngine
+class UberArcanistSubmitQueueEngine
     extends ArcanistGitLandEngine
 {
   protected $revision;
@@ -11,6 +11,7 @@ final class UberArcanistSubmitQueueEngine
   private $submitQueueTags;
 
   public function execute() {
+    $this->writeInfo("START", "ENGINE Started");
     $this->verifySourceAndTargetExist();
 
     $workflow = $this->getWorkflow();
@@ -23,9 +24,14 @@ final class UberArcanistSubmitQueueEngine
     $this->saveLocalState();
 
     try {
+      $this->writeInfo("START", "identify revision start");
       $this->identifyRevision();
       assert(!empty($this->revision));
+      $this->writeInfo("RUN", "validation started");
+      $this->validate();
+      $this->writeInfo("RUN", "Landing commits start");
       $this->printLandingCommits();
+      $this->writeInfo("RUN", "Landing commits done");
 
       if ($this->getShouldPreview()) {
         $this->writeInfo(
@@ -87,7 +93,7 @@ final class UberArcanistSubmitQueueEngine
     }
   }
 
-  private function pushChangeToSubmitQueue() {
+  protected function pushChangeToSubmitQueue() {
     $this->writeInfo(
       pht('PUSHING'),
       pht('Pushing changes to Submit Queue.'));
@@ -289,6 +295,11 @@ final class UberArcanistSubmitQueueEngine
     } else {
       return array();
     }
+  }
+
+  protected function validate()
+  {
+    // No-Op
   }
 
   protected $submitQueueClient;
