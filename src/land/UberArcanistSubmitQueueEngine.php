@@ -11,7 +11,6 @@ class UberArcanistSubmitQueueEngine
   private $submitQueueTags;
 
   public function execute() {
-    $this->writeInfo("START", "ENGINE Started");
     $this->verifySourceAndTargetExist();
 
     $workflow = $this->getWorkflow();
@@ -24,14 +23,9 @@ class UberArcanistSubmitQueueEngine
     $this->saveLocalState();
 
     try {
-      $this->writeInfo("START", "identify revision start");
       $this->identifyRevision();
-      assert(!empty($this->revision));
-      $this->writeInfo("RUN", "validation started");
       $this->validate();
-      $this->writeInfo("RUN", "Landing commits start");
       $this->printLandingCommits();
-      $this->writeInfo("RUN", "Landing commits done");
 
       if ($this->getShouldPreview()) {
         $this->writeInfo(
@@ -297,9 +291,8 @@ class UberArcanistSubmitQueueEngine
     }
   }
 
-  protected function validate()
-  {
-    // No-Op
+  protected function validate() {
+    assert(!empty($this->revision));
   }
 
   protected $submitQueueClient;
